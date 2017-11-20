@@ -18,6 +18,7 @@ import logging
 import json
 import os
 import time
+import six
 
 from ambariclient import base, exceptions, events
 from ambariclient.utils import normalize_underscore_case, NullHandler
@@ -738,20 +739,110 @@ class ClusterService(Service):
             }))
         return self
 
+class ConfigurationCollection(base.QueryableModelCollection):
+    """This class takes into account the particular structure of the
+    Configurations part of the API. In short, a configuration is characterized
+    by its type and its tag.
+    In particular, the __call__() method enables to :
+        - call this class with a type and a tag
+        - call it only with a type
+        - call it with a type and a list of tags
+        - call it with a list of (type, tag) tuples
+    """
+
+    def __init__(self, *args, **kwargs):
+        super(ConfigurationCollection, self).__init__(*args, **kwargs)
+        self._type = None
+
+    @property
+    def url(self):
+        """The url for this collection."""
+        if self.parent is None:
+            # TODO: differing API Versions?
+            pieces = [self.client.base_url, 'api', 'v1']
+        else:
+            pieces = [self.parent.url]
+
+        pieces.append(self.model_class.path)
+
+        result = '/'.join(pieces)
+
+        if self._type is not None:
+            result += '?type=' + self._type
+
+        return result
+
+
+    def __call__(self, *args, **kwargs):
+        if len(args) == 1 and isinstance(args[0], six.string_types):
+            self._type = args[0]
+            return self
+        elif len(args) == 2 and isinstance(args[0], six.string_types):
+            if isinstance(args[1], list):
+                # allow for passing in a list of ids and filtering the set
+                items = [ (args[0], str(tag_to_keep)) for tag_to_keep in args[1] ]
+            elif isinstance(args[1], six.string_types):
+                return self.model_class(self,
+                                        href = self.url +'?type=' + args[0] + '&tag=' + args[1],
+                                        data={self.model_class.primary_key: args[0]})
+        else:
+            items = args
+
+        if len(items) > 0:
+            self._models = []
+            self._is_inflated = True
+            for item in items:
+                if isinstance(item, dict):
+                    # we're preloading this object from existing response data
+                    model = self.model_class(self, href=item['href'])
+                    model.load(item)
+                else:
+                    # we only have the primary id, so create a deflated model
+                    model = self.model_class(self,
+                                            href = self.url +'?type=' + item[0] + '&tag=' + item[1],
+                                            data={self.model_class.primary_key: item[0]})
+                self._models.append(model)
+            return self
+
+        self._is_inflated = False
+        self._filter = {}
+        self._models = []
+
+        return self
+
 
 class Configuration(base.QueryableModel):
     path = 'configurations'
+    collection_class = ConfigurationCollection
     use_key_prefix = False
-    data_key = 'Config'
     primary_key = 'type'
     fields = ('cluster_name', 'tag', 'type', 'version', 'properties')
 
+    def apply(self):
+        """Sets the current configuration as the desired configuration for the current configuration type"""
+        data = {
+          "Clusters": {
+            "desired_config": {
+              "type": self.type,
+              "tag": self.tag
+            }
+          }
+        }
+
+        self.client.put(self.parent.parent.url, data=data)
+
     def load(self, response):
         # sigh, this API does not follow the pattern at all
-        for field in self.fields:
-            if field in response and field not in response[self.data_key]:
-                response[self.data_key][field] = response.pop(field)
+        if 'items' in response:
+            for response_field in response['items'][0]:
+                response[response_field] = response['items'][0][response_field]
+            del response['items']
         return super(Configuration, self).load(response)
+
+    def create(self, **kwargs):
+        data = self._generate_input_dict(**kwargs)
+        self.load(self.client.post(self.url, data=data))
+        return self
 
 
 class UserPrivilege(base.GeneratedIdentifierMixin, base.QueryableModel):
