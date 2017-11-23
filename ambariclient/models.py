@@ -774,9 +774,12 @@ class ConfigurationCollection(base.QueryableModelCollection):
 
 
     def __call__(self, *args, **kwargs):
-        if len(args) == 1 and isinstance(args[0], six.string_types):
-            self._type = args[0]
-            return self
+        if len(args) == 1:
+            if isinstance(args[0], six.string_types):
+                self._type = args[0]
+                return self
+            elif isinstance(args[0], list):
+                items = args[0]
         elif len(args) == 2 and isinstance(args[0], six.string_types):
             if isinstance(args[1], list):
                 # allow for passing in a list of ids and filtering the set

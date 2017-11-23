@@ -208,7 +208,7 @@ class QueryableModelCollection(ModelCollection):
                     model = self.model_class(self, href=item['href'])
                     model.load(item)
                 else:
-                    # we only have the primary id, so create a deflated model
+                    # we only have the primary id, so create an deflated model
                     model = self.model_class(self, href='/'.join([self.url, item]),
                                              data={self.model_class.primary_key: item})
                 self._models.append(model)
